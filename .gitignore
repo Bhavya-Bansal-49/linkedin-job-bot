@@ -1,0 +1,19 @@
+# Credentials & Config
+config.py
+setup_cron.sh
+
+# Environment
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Browsers & Logs
+chrome_profile/
+digest_log.txt
+*.log
+
+# Generated Reports
+daily_digest.html
+*.html
+*.png
