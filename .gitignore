@@ -17,3 +17,4 @@ digest_log.txt
 daily_digest.html
 *.html
 *.png
+seen_jobs.json

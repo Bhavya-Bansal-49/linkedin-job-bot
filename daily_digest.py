@@ -14,6 +14,28 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 import config
+import json
+
+SEEN_JOBS_FILE = "seen_jobs.json"
+
+def clean_url(url):
+    return url.split('?')[0]
+
+def load_seen_jobs():
+    if not os.path.exists(SEEN_JOBS_FILE):
+        return set()
+    try:
+        with open(SEEN_JOBS_FILE, "r") as f:
+            return set(json.load(f))
+    except (json.JSONDecodeError, IOError):
+        return set()
+
+def save_seen_jobs(new_links):
+    seen = load_seen_jobs()
+    seen.update(new_links)
+    with open(SEEN_JOBS_FILE, "w") as f:
+        json.dump(list(seen), f)
+
 
 def random_sleep(min_seconds=config.MIN_DELAY, max_seconds=config.MAX_DELAY):
     time.sleep(random.uniform(min_seconds, max_seconds))
@@ -73,6 +95,8 @@ def get_people_search_url(company, location=None, school=None):
 def scrape_jobs(driver):
     all_jobs = []
     seen_combinations = set() # (company, location) tuples
+    seen_links = load_seen_jobs()
+
     
     for loc in config.LOCATIONS:
         print(f"Scraping {loc}...")
@@ -103,10 +127,11 @@ def scrape_jobs(driver):
         for card in job_cards[:7]: # Top 7 per location to get ~20 total
             try:
                 # Use generalized selectors
-                title = card.find_element(By.CLASS_NAME, "base-search-card__title").text.strip()
-                company = card.find_element(By.CLASS_NAME, "base-search-card__subtitle").text.strip()
-                location = card.find_element(By.CLASS_NAME, "job-search-card__location").text.strip()
+                title = card.find_element(By.CLASS_NAME, "base-search-card__title").get_attribute("innerText").strip()
+                company = card.find_element(By.CLASS_NAME, "base-search-card__subtitle").get_attribute("innerText").strip()
+                location = card.find_element(By.CLASS_NAME, "job-search-card__location").get_attribute("innerText").strip()
                 link = card.find_element(By.CLASS_NAME, "base-card__full-link").get_attribute("href")
+                link = clean_url(link)
                 
                 # Deduplication Logic: Max 1 job per company per location
                 # We use the scraped location, which might be slightly different from the search location
@@ -119,6 +144,10 @@ def scrape_jobs(driver):
                 # Check if already added (link check acts as secondary safety)
                 if any(j['link'] == link for j in all_jobs):
                     continue
+                
+                # Check against historical memory
+                if link in seen_links:
+                    continue
 
                 seen_combinations.add(combo)
                 all_jobs.append({
@@ -127,9 +156,6 @@ def scrape_jobs(driver):
                     "location": location,
                     "link": link
                 })
-            except Exception as e:
-                # print(f"Skipping card: {e}")
-                pass
             except Exception as e:
                 # print(f"Skipping card: {e}")
                 pass
@@ -180,6 +206,9 @@ def generate_html(jobs):
         
     html_content += "</body></html>"
     
+    with open(config.OUTPUT_FILE, "w") as f:
+        f.write(html_content)
+    
     # Return absolute path for email attachment/reading
     abs_path = os.path.abspath(config.OUTPUT_FILE)
     print(f"Digest generated: {abs_path}")
@@ -217,8 +246,17 @@ def run():
     try:
         check_login(driver)
         jobs = scrape_jobs(driver)
+        if not jobs:
+            print("No new jobs found today.")
+            return
+
+        # Save the new jobs to memory so they aren't sent again
+        new_links = [j['link'] for j in jobs]
+        save_seen_jobs(new_links)
+
         html_path = generate_html(jobs)
         send_email(html_path)
+
     except KeyboardInterrupt:
         print("Stopped.")
     finally:
