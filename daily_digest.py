@@ -36,8 +36,40 @@ def save_seen_jobs(new_links):
     with open(SEEN_JOBS_FILE, "w") as f:
         json.dump(list(seen), f)
 
+    with open(SEEN_JOBS_FILE, "w") as f:
+        json.dump(list(seen), f)
+
+
+def calculate_score(job):
+    score = 0
+    
+    # 1. Location Scoring
+    loc = job['location'].lower()
+    if "austin" in loc:
+        score += 30
+    elif "san francisco" in loc or "bay area" in loc:
+        score += 20
+    elif "united states" in loc: # Remote/General
+        score += 10
+        
+    # 2. Title/Seniority Scoring
+    title = job['title'].lower()
+    
+    # Penalties for junior roles
+    if any(x in title for x in ["intern", "internship", "junior", "jr.", "apprentice"]):
+        score -= 20
+        
+    # Boosts for senior/match roles
+    if "product manager" in title: # Exact phrase match (vs just 'manager')
+        score += 5
+        
+    if any(x in title for x in ["senior", "sr.", "principal", "staff", "lead", "head", "director"]):
+        score += 10
+        
+    return score
 
 def random_sleep(min_seconds=config.MIN_DELAY, max_seconds=config.MAX_DELAY):
+
     time.sleep(random.uniform(min_seconds, max_seconds))
 
 def init_driver():
@@ -93,7 +125,7 @@ def get_people_search_url(company, location=None, school=None):
     return base + urllib.parse.urlencode(params)
 
 def scrape_jobs(driver):
-    all_jobs = []
+    all_candidates = []
     seen_combinations = set() # (company, location) tuples
     seen_links = load_seen_jobs()
 
@@ -104,27 +136,29 @@ def scrape_jobs(driver):
         driver.get(url)
         random_sleep(3, 5)
         
-        # Scroll a bit to load more
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
-        random_sleep(2, 3)
+        # Deep Scroll: Scroll multiple times to load more jobs
+        # We want to find enough potential candidates to satisfy the top 20
+        last_height = driver.execute_script("return document.body.scrollHeight")
+        for _ in range(5): # Scroll 5 times
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            random_sleep(2, 3)
+            
+            # Click "See more jobs" if present? (Often infinite scroll is enough for first 100)
+            
+            new_height = driver.execute_script("return document.body.scrollHeight")
+            if new_height == last_height:
+                break
+            last_height = new_height
         
         # Try multiple common container classes
         job_cards = driver.find_elements(By.CLASS_NAME, "base-search-card")
         if not job_cards:
             job_cards = driver.find_elements(By.CLASS_NAME, "job-search-card")
         
-        print(f"Found {len(job_cards)} jobs in {loc}.")
+        print(f"Found {len(job_cards)} total cards in {loc}.")
         
-        if len(job_cards) == 0:
-            print("No jobs found. Taking screenshot to debug...")
-            driver.save_screenshot(f"debug_{loc.replace(' ', '_')}.png")
-            # Save HTML source
-            with open(f"debug_source_{loc.replace(' ', '_')}.html", "w") as f:
-                f.write(driver.page_source)
-            print("Saved debug source HTML.")
-            # break # Keep loop going to try other locations
-        
-        for card in job_cards[:7]: # Top 7 per location to get ~20 total
+        # Process ALL cards found
+        for card in job_cards:
             try:
                 # Use generalized selectors
                 title = card.find_element(By.CLASS_NAME, "base-search-card__title").get_attribute("innerText").strip()
@@ -133,34 +167,38 @@ def scrape_jobs(driver):
                 link = card.find_element(By.CLASS_NAME, "base-card__full-link").get_attribute("href")
                 link = clean_url(link)
                 
-                # Deduplication Logic: Max 1 job per company per location
-                # We use the scraped location, which might be slightly different from the search location
-                # but "Austin, Texas, United States" vs "Austin, TX" handling is good enough by exact match or simple inclusion.
-                combo = (company, location)
-                
-                if combo in seen_combinations:
-                     continue
-                
-                # Check if already added (link check acts as secondary safety)
-                if any(j['link'] == link for j in all_jobs):
-                    continue
-                
-                # Check against historical memory
+                # Check against historical memory FIRST
                 if link in seen_links:
                     continue
 
+                # Deduplication Logic within current run
+                combo = (company, location)
+                if combo in seen_combinations:
+                     continue
+                
+                # Check link dict uniqueness
+                if any(j['link'] == link for j in all_candidates):
+                    continue
+
                 seen_combinations.add(combo)
-                all_jobs.append({
+                
+                job_data = {
                     "title": title,
                     "company": company,
                     "location": location,
                     "link": link
-                })
+                }
+                
+                # Pre-calculate score
+                job_data['score'] = calculate_score(job_data)
+                
+                all_candidates.append(job_data)
+                
             except Exception as e:
                 # print(f"Skipping card: {e}")
                 pass
                 
-    return all_jobs
+    return all_candidates
 
 def generate_html(jobs):
     html_content = f"""
@@ -245,16 +283,26 @@ def run():
     driver = init_driver()
     try:
         check_login(driver)
-        jobs = scrape_jobs(driver)
-        if not jobs:
+        candidates = scrape_jobs(driver)
+        
+        print(f"Total unique new candidates found: {len(candidates)}")
+        
+        if not candidates:
             print("No new jobs found today.")
             return
 
-        # Save the new jobs to memory so they aren't sent again
-        new_links = [j['link'] for j in jobs]
+        # Prioritize: Sort by score descending
+        candidates.sort(key=lambda x: x['score'], reverse=True)
+        
+        # Select Top 20
+        final_jobs = candidates[:20]
+        print(f"Selected top {len(final_jobs)} jobs to send.")
+
+        # Save the new jobs to memory
+        new_links = [j['link'] for j in final_jobs]
         save_seen_jobs(new_links)
 
-        html_path = generate_html(jobs)
+        html_path = generate_html(final_jobs)
         send_email(html_path)
 
     except KeyboardInterrupt:
