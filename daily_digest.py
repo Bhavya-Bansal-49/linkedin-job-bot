@@ -91,13 +91,30 @@ def init_driver():
     return driver
 
 def check_login(driver):
-    driver.get("https://www.linkedin.com/feed/")
+    driver.get("https://www.linkedin.com/login")
     random_sleep()
-    if "feed" not in driver.current_url:
-        print("Not logged in. Please log in manually in the browser window.")
-        input("Press Enter here after you have successfully logged in...")
-    else:
+    if "feed" in driver.current_url:
         print("Already logged in!")
+        return
+
+    print("Not logged in. Attempting automated login...")
+    try:
+        username_field = driver.find_element(By.ID, "username")
+        username_field.send_keys(config.LINKEDIN_USERNAME)
+        
+        password_field = driver.find_element(By.ID, "password")
+        password_field.send_keys(config.LINKEDIN_PASSWORD)
+        
+        login_button = driver.find_element(By.XPATH, "//button[@type='submit']")
+        login_button.click()
+        
+        print("Clicked login. Waiting for redirect...")
+        random_sleep(5, 10)
+        
+        if "feed" not in driver.current_url and "checkpoint" not in driver.current_url:
+             print("Warning: Might not have logged in successfully. URL:", driver.current_url)
+    except Exception as e:
+        print(f"Login failed: {e}")
 
 def get_job_search_url(keywords, location):
     base = "https://www.linkedin.com/jobs/search/?"

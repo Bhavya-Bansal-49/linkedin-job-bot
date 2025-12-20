@@ -1,0 +1,41 @@
+name: Daily Job Digest
+
+on:
+  schedule:
+    # Run at 13:00 UTC = 7:00 AM Central Standard Time
+    - cron: '0 13 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  run-digest:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install Dependencies
+      run: |
+        pip install -r requirements.txt
+
+    - name: Run Job Bot
+      env:
+        GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
+        LINKEDIN_USERNAME: ${{ secrets.LINKEDIN_USERNAME }}
+        LINKEDIN_PASSWORD: ${{ secrets.LINKEDIN_PASSWORD }}
+      run: |
+        python daily_digest.py
+
+    - name: Commit Job Memory
+      # Commit changes to seen_jobs.json so we don't send duplicates next time
+      run: |
+        git config --global user.name 'GitHub Action'
+        git config --global user.email 'action@github.com'
+        git add seen_jobs.json
+        # Only commit if there are changes
+        git diff --quiet && git diff --staged --quiet || (git commit -m "chore: Update job memory [skip ci]" && git push)
