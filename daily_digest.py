@@ -81,6 +81,11 @@ def init_driver():
     options.add_argument("user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36")
     options.add_argument("--start-maximized")
     
+    # Required for CI/Docker environments
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    
     # Use the same profile directory to keep login state
     current_dir = os.getcwd()
     profile_dir = os.path.join(current_dir, "chrome_profile")
